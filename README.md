@@ -2,7 +2,7 @@
 
 **Yes, I'd keep it.** It gets the hard part right: it records each physical unit on its own slip and checks it against the approved request. What it gets wrong is everything around the moment a different person has to act on those records. That covers the next shift, a unit coming back with someone who isn't named on the slip, and a kit that leaves the desk incomplete. My changes are about that handover.
 
-Open `index.html`, press **Restart sample shift** (twice), **sign in** at the bottom of the menu, and play the three steps. Each handover signs you out, so sign in again as the next shift. The ◐ button in the header switches between light (the default) and dark. Screenshots are in [`docs/`](docs/).
+Open `index.html`, press **Restart sample shift** (twice), **sign in** using the strip at the top, and play the three steps. Each handover signs you out, so sign in again as the next shift. The ◐ button in the header switches between light (the default) and dark. Screenshots are in [`docs/`](docs/).
 
 **Who uses it:** only the staff working the media desk. Club members like Isha, Kabir and Leela never log in. Their requests arrive already approved by the Student Activities Office, and their messages are copied into the Desk book. So staff-only actions such as adding equipment belong here.
 
@@ -54,6 +54,8 @@ The core change is that **the handover lives on the record**, and **returns star
 | **Keyboard shortcuts** | <kbd>/</kbd> return a unit · <kbd>N</kbd> new issue · <kbd>T</kbd> Today · <kbd>Esc</kbd> close a form. They're ignored while typing in a field and listed under the menu. | A busy counter shouldn't need a mouse. |
 | **Light / dark theme** | A single ◐ button in the header. The default is light; clicking it switches to dark, and the choice is remembered in that browser. | Desks have bright counters and dim back rooms. |
 | **Full-screen portal layout** | The app fills the window: full-height sidebar, header and status bar fixed, and only the work area scrolls. Phones get a top menu instead. | It's a tool people keep open all shift, not a page they read once. |
+| **Booking conflicts** | Approved requests not yet collected are bookings. The app checks them in pickup order against what will actually be free. If one can't be met, it's flagged on Today, on the request, in the handover check and in the shift summary, e.g. *"Drama Club needs an HDMI projector at Sat 11 am — PR-04 out until Sun 10 am, PR-06 in repair."* The issue form warns before you create a clash. The return card shows **Next needed: Drama Club · Sat 11 am**. Marking PR-06 repaired clears the warning. | A loan that runs late, or a unit that comes back damaged, quietly breaks the next club's event. |
+| **Interface polish** | A **sign-in strip** at the top of the work area, since the sidebar spot was easy to miss. **Shift summaries** shown as labelled lists, not paragraphs. **Toasts** next to the work for confirmations and errors, with the status bar kept as the screen-reader copy. Secondary slip actions moved into a **⋯ menu**, so each row has one main button. **Darker warning text** in light mode for readable contrast. | Faster to scan at a busy counter, and harder to miss a result. |
 | **Requests** | A status per request (*Awaiting pickup*, *Out*, *Partly returned · 2 of 3 back*, *Returned*) and a per-item breakdown. | Kit-level view of a unit-level register. |
 
 ### Edge cases handled
@@ -70,6 +72,7 @@ The core change is that **the handover lives on the record**, and **returns star
 - **Missing parts.** A return with an unticked accessory still closes the slip and shelves the unit. The missing part stays on Today and in the shift summary until it's marked returned.
 - **Shortcuts while typing.** Shortcuts are ignored inside text fields, so typing "n" in a name doesn't open a new issue.
 - **Repairs.** "Mark repaired" only appears for a unit that is in repair.
+- **Bookings.** A whereabouts update that pushes the only working projector past another club's pickup is flagged straight away, and so is a damaged return. Undo or repair clears the flag. Bookings are checked in pickup order, so two clubs can't both be promised the same unit.
 - **Restart.** Restarting needs a second confirming click.
 - **Adding equipment.** These are refused, each with a suggested fix:
   - a duplicate tag code
@@ -99,6 +102,10 @@ The core change is that **the handover lives on the record**, and **returns star
    - Leela hands it over and I click **Return…**. The card already says *Brought in by: Leela Das* and shows PR-04 and SP-02 back.
    - I check the tag reads AD-12 and confirm. The Film Society kit shows *3 of 3 back*, and Tara's microphone is never touched.
 
+## Sample data I added
+
+I added one fictional approved request, **RQ-219 · Drama Club · Rehearsal run-through**: an HDMI projector and adapter, collected Sat 11 am and returned Sat 5 pm. It gives the booking-conflict check something real to compete over. Nikhil Rao, the filer, is added to the people list. Nothing else in the original scenario changed.
+
 ## What I kept
 
 - One slip per physical unit.
@@ -117,7 +124,7 @@ I'd time each return from the item landing on the counter to the confirmed slip,
 
 I tested every flow in headless Microsoft Edge with scripted runs:
 - **The whole shift:** all three steps.
-- **Edge cases:** the ones above, including wrong unit, unknown code, damaged return without a note, unlisted collector, past and late return times, a missing remote, signed-out actions and keyboard shortcuts.
+- **Edge cases:** the ones above, including wrong unit, unknown code, damaged return without a note, unlisted collector, past and late return times, a missing remote, signed-out actions, keyboard shortcuts and booking conflicts (created, flagged and cleared).
 - **Layouts:** screenshots at 1440×900 and at a 390px phone width, in both themes.
 
 No run showed a script error. Saved progress is checked on load, so a corrupted browser save falls back to a fresh shift.

@@ -46,6 +46,17 @@
       note: "Collection on Saturday morning.",
       delegates: [],
     },
+    {
+      id: "RQ-219",
+      club: "Drama Club",
+      event: "Rehearsal run-through",
+      owner: "Nikhil Rao",
+      due: "Sat 5 pm",
+      pickup: "Sat 11 am",
+      items: ["HDMI projector", "USB-C → HDMI adapter"],
+      note: "Projecting set designs in the seminar hall from a USB-C laptop.",
+      delegates: [],
+    },
   ];
   const baseAssets = [
     { id: "PR-04", type: "HDMI projector", model: "BenQ MH550", bin: "A2" },
@@ -86,6 +97,7 @@
     "Leela Das",
     "Tara Shah",
     "Dev Menon",
+    "Nikhil Rao",
   ];
   const shifts = [
     {
@@ -368,6 +380,13 @@
         sub: "Every slip, return and note records who on the desk made it.",
         actions: [["Sign in", "gosignin", ""]],
       });
+    for (const x of bookingRisks())
+      list.push({
+        level: "warn",
+        title: "Booking at risk · " + x.r.club + " · " + x.r.pickup,
+        sub: "Needs " + article(x.type) + x.type + ": " + x.why + ".",
+        actions: [["View booking", "goreq", x.r.id]],
+      });
     for (const l of s.loans)
       if (l.back && l.missing && l.missing.length)
         list.push({
@@ -459,6 +478,59 @@
     return list.sort((a, b) => a.at - b.at);
   }
   // What the next shift would inherit without an explanation.
+  // Bookings: approved requests not yet collected. Walk them in pickup order and
+  // give each the unit that is free soonest; any line left without a unit is at risk.
+  function bookingRisks(extra = [], skipReq = "") {
+    const free = {};
+    for (const a of assets) {
+      if (inRepair(a.id)) continue;
+      const l = out(a.id);
+      free[a.id] = l ? dueAt(l.expected || l.due) : 0;
+    }
+    for (const x of extra) free[x.asset] = x.until;
+    const risks = [];
+    const bookings = requests
+      .filter((r) => r.id !== skipReq && !loansFor(r.id).length && !lapsed(r))
+      .sort((a, b) => dueAt(a.pickup) - dueAt(b.pickup));
+    for (const r of bookings) {
+      const at = Math.max(dueAt(r.pickup), now());
+      for (const type of r.items) {
+        const ids = Object.keys(free)
+          .filter((id) => getAsset(id).type === type && free[id] <= at)
+          .sort((a, b) => free[a] - free[b]);
+        if (ids.length) {
+          free[ids[0]] = dueAt(r.due);
+          continue;
+        }
+        const why = assets
+          .filter((a) => a.type === type)
+          .map((a) => {
+            if (inRepair(a.id)) return a.id + " in repair";
+            const ex = extra.find((x) => x.asset === a.id);
+            if (ex) return a.id + " would be out until " + fmt(ex.until);
+            const l = out(a.id);
+            if (l) return a.id + " out until " + (l.expected || l.due);
+            return a.id + " promised to an earlier booking";
+          });
+        risks.push({ r, type, why: why.join(", ") || "no unit of this type" });
+      }
+    }
+    return risks;
+  }
+  const article = (w) => (/^(HDMI|[AEIOU])/i.test(w) ? "an " : "a ");
+  const riskText = (x) =>
+    x.r.club + " needs " + article(x.type) + x.type + " at " + x.r.pickup + " — " + x.why + ".";
+  // The next booking that will want a unit of this type once it's back.
+  const nextNeed = (type) =>
+    requests
+      .filter(
+        (r) =>
+          !loansFor(r.id).length &&
+          !lapsed(r) &&
+          r.items.includes(type) &&
+          dueAt(r.pickup) >= now() - 60,
+      )
+      .sort((a, b) => dueAt(a.pickup) - dueAt(b.pickup))[0];
   function handoverIssues(nextAt) {
     const list = [];
     for (const r of requests)
@@ -481,6 +553,11 @@
             ") will be overdue by then, and nobody has recorded where it is.",
           fix: ["Record whereabouts", "gostill", String(l.num)],
         });
+    for (const x of bookingRisks())
+      list.push({
+        text: "Booking at risk: " + riskText(x),
+        fix: ["View booking", "goreq", x.r.id],
+      });
     return list;
   }
 
@@ -567,6 +644,22 @@
     ' · time" />' +
     (note ? "<small>" + note + "</small>" : "") +
     "</fieldset>";
+  // A desk-book entry body: structured lines for summaries, plain text otherwise.
+  const bodyHtml = (e) =>
+    Array.isArray(e.lines) && e.lines.length
+      ? '<dl class="summarylist">' +
+        e.lines
+          .map(
+            (x) =>
+              "<div><dt>" +
+              esc(x.label) +
+              "</dt><dd><ul>" +
+              x.items.map((i) => "<li>" + esc(i) + "</li>").join("") +
+              "</ul></dd></div>",
+          )
+          .join("") +
+        "</dl>"
+      : "<p>" + esc(e.text) + "</p>";
   const hint = (text, tone = "") =>
     '<p class="hint' + (tone ? " " + tone : "") + '">' + text + "</p>";
   const item = (x) =>
@@ -634,9 +727,9 @@
             esc(e.author) +
             "</strong><small>" +
             esc(fmt(e.at)) +
-            "</small><p>" +
-            esc(e.text) +
-            "</p></div></div>",
+            "</small>" +
+            bodyHtml(e) +
+            "</div></div>",
         )
         .join("");
     }
@@ -677,7 +770,12 @@
         esc(r.due) +
         "</p><p>" +
         esc(r.note) +
-        "</p><p><b>May collect</b> " +
+        "</p>" +
+        bookingRisks()
+          .filter((x) => x.r.id === r.id)
+          .map((x) => hint("<b>Booking at risk.</b> Needs " + article(x.type) + esc(x.type) + ": " + esc(x.why) + ".", "warn"))
+          .join("") +
+        "<p><b>May collect</b> " +
         collectors(r)
           .map((p) => esc(p) + " <small>(" + esc(authority(r, p)) + ")</small>")
           .join(", ") +
@@ -743,7 +841,9 @@
           return row(
             r.event,
             r.id + " · " + r.club + " · pickup " + r.pickup + " · return by " + r.due,
-            badge(st, tone) + btn("View form", "request", r.id),
+            badge(st, tone) +
+              (bookingRisks().some((x) => x.r.id === r.id) ? badge("Booking at risk", "warn") : "") +
+              btn("View form", "request", r.id),
           );
         })
         .join("");
@@ -950,6 +1050,19 @@
     html += "</div>";
     const picked = issuable(d, r).picked;
     const left = issuable(d, r).left;
+    const until = fromParts(d.dueDay, d.dueTime) ?? dueAt(r.due);
+    const before = new Set(bookingRisks([], r.id).map((x) => x.r.id + x.type));
+    const caused = bookingRisks(
+      picked.map((id) => ({ asset: id, until })),
+      r.id,
+    ).filter((x) => !before.has(x.r.id + x.type));
+    if (caused.length)
+      html += hint(
+        "<b>This clashes with a booking.</b> " +
+          caused.map((x) => esc(riskText(x))).join(" ") +
+          " Pick a different unit or an earlier return time if you can.",
+        "warn",
+      );
     if (picked.length && left.length)
       html += hint(
         "<b>The kit will leave incomplete.</b> Not issuing: " +
@@ -1028,6 +1141,13 @@
                   (x.back ? badge("Back", "good") : badge("Still out")),
               )
               .join(" "),
+          )
+        : "") +
+      (nextNeed(a.type)
+        ? line(
+            "Next needed",
+            badge(nextNeed(a.type).club + " · " + nextNeed(a.type).pickup, "warn") +
+              " keep it at the front, don’t bury it in the bin",
           )
         : "") +
       '</dl><div class="form"><label><span>Brought in by</span><input name="by" list="people" maxlength="60" autocomplete="off" value="' +
@@ -1193,15 +1313,19 @@
         (l.back
           ? badge(damaged ? "Sent to repair" : "Returned", damaged ? "warn" : "good")
           : (overdue(l) ? badge("Overdue", "warn") : "") +
-            btn("Still out with…", "still", String(l.num)) +
             btn("Return…", "return", l.asset, "primary")) +
+        '<details class="more"><summary aria-label="More actions for slip L-' +
+        l.num +
+        '">⋯</summary><div class="menu">' +
+        (l.back ? "" : btn("Still out with…", "still", String(l.num))) +
         btn(
-          s.history === l.num ? "Hide history" : "History",
+          s.history === l.num ? "Hide history" : "Show history",
           "history",
           String(l.num),
-          "ghost",
+          "",
           ' aria-expanded="' + (s.history === l.num) + '"',
         ) +
+        "</div></details>" +
         "</div></div>";
       if (s.stillOut === l.num && !l.back) html += stillOutForm(l);
       if (s.history === l.num)
@@ -1237,6 +1361,7 @@
             ? "Shift summary · written at handover"
             : "Counter handover note" + (n.by ? " · " + n.by : ""),
         text: n.text,
+        lines: n.lines,
       });
     for (const l of s.loans)
       if (l.withWho)
@@ -1272,9 +1397,8 @@
         esc(fmt(e.at, true)) +
         "</small><h3>" +
         esc(e.author) +
-        "</h3><p>" +
-        esc(e.text) +
-        "</p>" +
+        "</h3>" +
+        bodyHtml(e) +
         (e.ref ? '<p class="buttons">' + btn("Open " + e.ref, "ref", e.ref, "small") + "</p>" : "") +
         "</article>";
     return html;
@@ -1367,9 +1491,8 @@
           esc(s.staff) +
           "</strong>" +
           btn("Sign out", "signout", "", "small ghost")
-        : '<form data-signin novalidate><label><small>On the desk</small><select name="staff" aria-label="Who is on the desk"><option value="">Sign in…</option>' +
-          opts(staffList.map((x) => [x, x])) +
-          '</select></label><button type="submit" class="small primary">Start shift</button></form>') +
+        : "<small>On the desk</small><strong>Nobody signed in</strong>" +
+          btn("Sign in", "gosignin", "", "small primary")) +
       '<button type="button" class="small ghost keys" data-action="keys" aria-expanded="' +
       s.shortcuts +
       '">Keyboard shortcuts</button>' +
@@ -1378,8 +1501,15 @@
         : "") +
       "</div>";
     q("[data-page]").innerHTML =
-      (s.check && phase.next ? checkPanel() : "") + screens[s.tab]();
+      (s.staff
+        ? ""
+        : '<form data-signin class="signinstrip" novalidate><div><strong>Nobody is signed in.</strong><small>You can look things up, but sign in before issuing, returning or writing notes.</small></div><label><span class="sr">Who is on the desk</span><select name="staff"><option value="">Choose your name…</option>' +
+          opts(staffList.map((x) => [x, x])) +
+          '</select></label><button type="submit" class="primary">Start shift</button></form>') +
+      (s.check && phase.next ? checkPanel() : "") +
+      screens[s.tab]();
     const status = q("[data-status]");
+    if (s.notice !== status.textContent && s.tone) toast(s.notice, s.tone);
     status.textContent = s.notice;
     status.className = s.tone ? "tone-" + s.tone : "";
     const undo = q('[data-action="undo"]');
@@ -1414,14 +1544,31 @@
   }
   const needStaff = () =>
     fail(
-      "Sign in first (bottom of the menu) — every record shows who on the desk made it.",
-      "[data-signin] select",
+      "Sign in first — every record shows who on the desk made it.",
+      ".signinstrip select",
     );
+  // A short-lived toast so results show up where people are looking. The status bar
+  // stays the announced (aria-live) copy, so the toast is hidden from screen readers.
+  let toastTimer = 0;
+  function toast(msg, tone) {
+    let el = q(".toast");
+    if (!el) {
+      el = document.createElement("div");
+      el.className = "toast";
+      el.setAttribute("aria-hidden", "true");
+      root.append(el);
+    }
+    el.textContent = msg;
+    el.className = "toast show tone-" + tone;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove("show"), tone === "error" ? 6000 : 3500);
+  }
   // Reject a form without redrawing, so whatever the person entered stays put.
   const fail = (msg, focus = "") => {
     s.notice = msg;
     s.tone = "error";
     const status = q("[data-status]");
+    toast(msg, "error");
     status.textContent = msg;
     status.className = "tone-error";
     for (const el of root.querySelectorAll("[aria-invalid]"))
@@ -1490,47 +1637,50 @@
     const issued = s.loans.filter((l) => l.issuedAt === t);
     const back = s.loans.filter((l) => l.back && l.returnedAt === t);
     const open = openLoans();
-    const parts = [];
+    const lines = [];
+    if (s.staff) lines.push({ label: "Handed over by", items: [s.staff] });
     if (issued.length)
-      parts.push("Issued " + issued.map((l) => l.asset + " to " + l.who).join(", ") + ".");
+      lines.push({ label: "Issued", items: issued.map((l) => l.asset + " to " + l.who) });
     if (back.length)
-      parts.push(
-        "Returned " +
-          back
-            .map((l) => l.asset + (l.condition === "damaged" ? " (damaged, sent to repair)" : ""))
-            .join(", ") +
-          ".",
-      );
-    parts.push(
-      open.length
-        ? "Still out: " +
-            open
-              .map(
-                (l) =>
-                  l.asset +
-                  " · " +
-                  getReq(l.req).club +
-                  " · " +
-                  (l.withWho
-                    ? "with " + l.withWho + ", expected " + l.expected
-                    : l.who + ", due " + l.due) +
-                  (overdue(l) ? " · overdue" : ""),
-              )
-              .join("; ") +
-            "."
-        : "Nothing is out on loan.",
-    );
+      lines.push({
+        label: "Returned",
+        items: back.map(
+          (l) => l.asset + (l.condition === "damaged" ? " (damaged, sent to repair)" : ""),
+        ),
+      });
+    lines.push({
+      label: "Still out",
+      items: open.length
+        ? open.map(
+            (l) =>
+              l.asset +
+              " · " +
+              getReq(l.req).club +
+              " · " +
+              (l.withWho
+                ? "with " + l.withWho + ", expected " + l.expected
+                : l.who + ", due " + l.due) +
+              (overdue(l) ? " · overdue" : ""),
+          )
+        : ["Nothing"],
+    });
     const missingParts = s.loans.filter((l) => l.back && l.missing && l.missing.length);
     if (missingParts.length)
-      parts.push(
-        "Parts still to come back: " +
-          missingParts
-            .map((l) => l.asset + " " + l.missing.join(", ") + " (" + l.returnedBy + ")")
-            .join("; ") +
-          ".",
-      );
-    if (s.staff) parts.unshift("Handed over by " + s.staff + ".");
-    s.notes.push({ at: t, kind: "summary", text: parts.join(" "), by: s.staff });
+      lines.push({
+        label: "Parts to come back",
+        items: missingParts.map(
+          (l) => l.asset + " " + l.missing.join(", ") + " (" + l.returnedBy + ")",
+        ),
+      });
+    const risks = bookingRisks();
+    if (risks.length) lines.push({ label: "Bookings at risk", items: risks.map(riskText) });
+    s.notes.push({
+      at: t,
+      kind: "summary",
+      text: lines.map((x) => x.label + ": " + x.items.join("; ") + ".").join(" "),
+      lines,
+      by: s.staff,
+    });
   }
   function advance() {
     summarise();
@@ -1720,13 +1870,13 @@
         s.tone = "";
         break;
       case "gosignin":
-        s.focus = "[data-signin] select";
+        s.focus = ".signinstrip select";
         break;
       case "signout":
         s.notice = s.staff + " signed out. Sign in before changing any records.";
         s.tone = "";
         s.staff = "";
-        s.focus = "[data-signin] select";
+        s.focus = ".signinstrip select";
         break;
       case "keys":
         s.shortcuts = !s.shortcuts;
@@ -1899,7 +2049,8 @@
 
     if (f.matches("[data-signin]")) {
       const who = String(form.get("staff") || "");
-      if (!staffList.includes(who)) return fail("Choose your name to sign in.", "[data-signin] select");
+      if (!staffList.includes(who))
+        return fail("Choose your name to sign in.", "[data-signin] select");
       s.staff = who;
       return commit(who + " is on the desk. Everything you record will show your name.", "ok");
     }
@@ -2231,7 +2382,14 @@
       (d.selected && !getReq(d.selected)) ||
       !Array.isArray(d.notes) ||
       !d.notes.every(
-        (n) => n && isAt(n.at) && isStr(n.text) && (!n.ref || refOk(n.ref)),
+        (n) =>
+          n &&
+          isAt(n.at) &&
+          isStr(n.text) &&
+          (!n.ref || refOk(n.ref)) &&
+          (n.lines === undefined ||
+            (Array.isArray(n.lines) &&
+              n.lines.every((x) => x && isStr(x.label) && Array.isArray(x.items) && x.items.every(isStr)))),
       ) ||
       !d.repairs ||
       typeof d.repairs !== "object" ||
